@@ -19,11 +19,11 @@ def get_master_data():
 	r = requests.get(masterData_url, params=masterData_payload)
 	pass
 
-csv_file = 'cb_odm_csv/organizations.csv'
+csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
 def make_orgs_df(filename):
 	df = pd.read_csv(filename)
 	df_filt = df[(df['primary_role'] == 'company') & (df['location_country_code'] == 'USA') & (df['location_region'].isin(['California', 'New York', 'Washington', 'Colorado', 'Texas', 'Connecticut', 'Massachusetts', 'New Jersey']))]
-	return df_filt
+	return df
 
 # df = make_orgs_df(csv_file)
 
@@ -52,7 +52,7 @@ def make_all_org_query_strings(df, total, request_size):
 
 # all_org_query_strings = make_all_org_query_strings(df, len(df['name'].unique()), 50)
 
-# org_query_str = make_one_org_query_str(df, 0,49)
+# org_query_str = make_one_org_query_str(df, 2100,2149)
 
 def make_date_strings(start, end):
 	result = []
@@ -71,34 +71,44 @@ def make_date_strings(start, end):
 		result.append(temp3)
 	return result
 
-# date_strings = make_date_strings(1995, 2015)
+# date_strings = make_date_strings(2015, 2015)
 
-def prep_payload(start_date, end_date, page_index, org_query_str):
+def prep_payload(start_date, end_date, page_index, org_query_str, fixed_start_date=False):
 	subject_query_str = 'subject:(TNM OR CON OR FNC OR LIC OR PDT OR SLS OR VEN OR FEA)'
 	industry_query_str = 'industry:(BIO OR CPR OR NET OR HRD OR STW OR CSE OR ITE OR MLM OR TLS OR HTS OR SEM OR BIM OR MEN OR NAN OR SMD OR TCS OR TEQ OR VIP WEB OR WIC OR GRE OR BRD)'
 	geo_query_str = 'geography:(USA)'
-	payload = {
-	'apikey': 'ded6410542df3e0e',
-	'query': '(content:(' + org_query_str + ') + companies:(' + org_query_str + ') + ' + subject_query_str +' + '+ industry_query_str +' + '+ geo_query_str +' + language:en)',
-	'pageSize': 100,
-	'pageIndex': page_index,
-	'startDate': start_date,
-	'endDate': end_date
-	}
+	if fixed_start_date:
+		payload = {
+		'apikey': 'ded6410542df3e0e',
+		'query': '(content:(' + org_query_str + ') + companies:(' + org_query_str + ') + ' + subject_query_str +' + '+ industry_query_str +' + '+ geo_query_str +' + language:en)',
+		'pageSize': 100,
+		'pageIndex': page_index,
+		'startDate': '08/07/2015'
+		# 'endDate': end_date
+		}
+	else:
+		payload = {
+		'apikey': 'ded6410542df3e0e',
+		'query': '(content:(' + org_query_str + ') + companies:(' + org_query_str + ') + ' + subject_query_str +' + '+ industry_query_str +' + '+ geo_query_str +' + language:en)',
+		'pageSize': 100,
+		'pageIndex': page_index,
+		'startDate': start_date,
+		'endDate': end_date
+		}
 	return payload
 
-# payld = prep_payload(date_strings[-1][0], date_strings[-1][1], 1, org_query_str)
+# payld = prep_payload(date_strings[2][0], date_strings[2][1], 1, org_query_str)
+# print date_strings[2][0]
+# print date_strings[2][1]
 
 def prep_request(payload):
 	getReleases_url = 'http://api.prnewswire.com/releases/version01/getReleases'
 	r = requests.get(getReleases_url, params=payload)
 	status = r.json()['feed']['statusCode']
-	print status
 	totalResults = r.json()['feed']['totalResults']
-	print pprint(r.json())
-	responses = r.json()['releases']['release']
+	# responses = r.json()['releases']['release']
 	search_params = r.json()['feed']['filter']
-	return r, status, totalResults, responses, search_params
+	return r, status, totalResults, search_params
 
 # r, status, totalResults, responses, search_params = prep_request(payld)
 
@@ -109,13 +119,12 @@ def prep_request(payload):
 def start_mongo(db_name, coll_name):
 	client = MongoClient('127.0.0.1', 27017)
 	db = client[db_name]
-	collection_name = coll_name
-	coll = db.collection_name
+	coll = db[coll_name]
 	return coll
 
 # coll = start_mongo('pr', 'test3')
 
-def mongo_insert_responses(responses):
+def mongo_insert_responses(responses, search_params, coll):
 	docs = []
 	for each in responses:
 		html_text = each['releaseContent']
@@ -159,22 +168,53 @@ for each org_name_set:
 
 '''
 
+def mini():
+	orgs_csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
+	df_orgs = make_orgs_df(orgs_csv_file)
+	coll = start_mongo('press', 'all_orgs')
+	org_name_sets = make_all_org_query_strings(df_orgs, len(df_orgs['name'].unique()), 50)
+	# date_strings = make_date_strings(2014, 2015)
+	j = 0
+	for org_set in org_name_sets:
+		print 'org-set #', j
+		j += 1
+		payload = prep_payload(start_date='08/07/2015', end_date='03/01/2016', page_index=1, org_query_str=org_set, fixed_start_date=True)
+		# print pprint(payload)
+		r, status, totalResults, search_params = prep_request(payload)
+		if totalResults == 0:
+			continue
+		responses = r.json()['releases']['release']
+		mongo_insert_responses(responses, search_params, coll)
+		if totalResults <= 100:
+			continue
+		else:
+			pages_needed = int(totalResults/100) + 1
+			for page_ind in xrange(1, pages_needed + 1):
+				payload = prep_payload(start_date='08/07/2015', end_date='03/01/2016', page_index=page_ind, org_query_str=org_set, fixed_start_date=True)
+				r, status, totalResults, search_params = prep_request(payload)
+				if totalResults == 0:
+					continue
+				responses = r.json()['releases']['release']
+				mongo_insert_responses(responses)
+	pass
+
+
 def main():
-	orgs_csv_file = 'cb_odm_csv/organizations.csv'
+	orgs_csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
 	df_orgs = make_orgs_df(orgs_csv_file)
 	coll = start_mongo('press', 'test1')
 	org_name_sets = make_all_org_query_strings(df_orgs, 500, 50)
 	date_strings = make_date_strings(2014, 2015)
 	for org_set in org_name_sets:
 		for date_set in date_strings:
-			print date_set[0]
-			print date_set[1]
+			# print date_set[0]
+			# print date_set[1]
 			payload = prep_payload(start_date=date_set[0], end_date=date_set[1], page_index=1, org_query_str=org_set)
-			print pprint(payload)
+			# print pprint(payload)
 			r, status, totalResults, responses, search_params = prep_request(payload)
 			mongo_insert_responses(responses)
 			if totalResults <= 100:
-				break
+				continue
 			else:
 				pages_needed = int(totalResults/100) + 1
 				for page_ind in xrange(1, pages_needed + 1):
@@ -184,7 +224,7 @@ def main():
 	pass
 
 if __name__ == '__main__':
-	main()
-
+	# main()
+	mini()
 
 
