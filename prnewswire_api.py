@@ -19,31 +19,33 @@ def get_master_data():
 	r = requests.get(masterData_url, params=masterData_payload)
 	pass
 
-csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
+# csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
 def make_orgs_df(filename):
 	df = pd.read_csv(filename)
 	df_filt = df[(df['primary_role'] == 'company') & (df['location_country_code'] == 'USA') & (df['location_region'].isin(['California', 'New York', 'Washington', 'Colorado', 'Texas', 'Connecticut', 'Massachusetts', 'New Jersey']))]
-	return df
+	df_filt_all_locations = df[df['primary_role'] == 'company']
+	df_filt_all_locations.drop_duplicates(subset=['name'], inplace=True)
+	return df_filt_all_locations
 
 # df = make_orgs_df(csv_file)
 
 def make_one_org_query_str(df, start, finish):
 	org_query_str = ''
 	for i in xrange(start, finish):
-		if i >= len(df['name'].unique()):
-			break
-		string = '"' + df['name'].unique()[i] + '"'
+		if i >= df.shape[0]:
+			continue
+		string = '"' + str(df['name'].iloc[i]) + '"'
 		if i == start:
 			org_query_str += string
 		else:
 			org_query_str += ' OR ' + string
 	return org_query_str
 
-def make_all_org_query_strings(df, total, request_size):
+def make_all_org_query_strings(df, total, request_size, start=0, finish=49):
 	result = []
 	requests_needed = int(total/request_size)
-	start = 0
-	finish = 49
+	# start = 0
+	# finish = 49
 	for i in xrange(requests_needed):
 		result.append(make_one_org_query_str(df, start, finish))
 		start += 50
@@ -83,7 +85,7 @@ def prep_payload(start_date, end_date, page_index, org_query_str, fixed_start_da
 		'query': '(content:(' + org_query_str + ') + companies:(' + org_query_str + ') + ' + subject_query_str +' + '+ industry_query_str +' + '+ geo_query_str +' + language:en)',
 		'pageSize': 100,
 		'pageIndex': page_index,
-		'startDate': '08/07/2015'
+		'startDate': '09/07/2015'
 		# 'endDate': end_date
 		}
 	else:
@@ -97,7 +99,7 @@ def prep_payload(start_date, end_date, page_index, org_query_str, fixed_start_da
 		}
 	return payload
 
-# payld = prep_payload(date_strings[2][0], date_strings[2][1], 1, org_query_str)
+# payld = prep_payload(date_strings[2][0], date_strings[2][1], 1, org_query_str, fixed_start_date=True)
 # print date_strings[2][0]
 # print date_strings[2][1]
 
@@ -110,8 +112,9 @@ def prep_request(payload):
 	search_params = r.json()['feed']['filter']
 	return r, status, totalResults, search_params
 
-# r, status, totalResults, responses, search_params = prep_request(payld)
+# r, status, totalResults, search_params = prep_request(payld)
 
+# responses = r.json()['releases']['release']
 # print responses[0]
 # print status
 # print totalResults
@@ -128,10 +131,13 @@ def mongo_insert_responses(responses, search_params, coll):
 	docs = []
 	for each in responses:
 		html_text = each['releaseContent']
+		if html_text == None or len(html_text) == 0:
+			continue
 		soup = BeautifulSoup(html_text, 'html.parser')
 		release_text = soup.get_text()
 
 		doc = {
+			'article_id': each['articleId'],
 			'date': each['date'],
 			'source': each['source'],
 			'release_text': release_text,
@@ -149,37 +155,19 @@ def mongo_insert_responses(responses, search_params, coll):
 
 # mongo_insert_responses(responses)
 
-
-'''
-start_mongo
-for each org_name_set:
-	for each date_range:
-		make_payload
-		make_request, get totalResults
-		mongo_insert_responses(from 1st request)
-		if totalResults <= 100:
-			break
-		else:
-			pages_needed = int(totalResults/100) + 1
-			for i in range(1, pages_needed + 1):
-				make_payload(page_index = i)
-				make_request
-				mongo_insert_responses
-
-'''
-
-def mini():
+def mini(start_index):
 	orgs_csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
 	df_orgs = make_orgs_df(orgs_csv_file)
-	coll = start_mongo('press', 'all_orgs')
-	org_name_sets = make_all_org_query_strings(df_orgs, len(df_orgs['name'].unique()), 50)
+	print 'DataFrame successfully created'
+	coll = start_mongo('press', 'big_2_part2')
+	print 'Mongo DB started'
+	org_name_sets = make_all_org_query_strings(df=df_orgs, total=df_orgs.shape[0], request_size=50, start=start_index, finish=(start_index+49))
+	print 'Org Name Sets successfully created'
 	# date_strings = make_date_strings(2014, 2015)
-	j = 0
-	for org_set in org_name_sets:
-		print 'org-set #', j
-		j += 1
-		payload = prep_payload(start_date='08/07/2015', end_date='03/01/2016', page_index=1, org_query_str=org_set, fixed_start_date=True)
-		# print pprint(payload)
+	for index, org_set in enumerate(org_name_sets):
+		print 'Org Set #', start_index
+		start_index += 50
+		payload = prep_payload(start_date='09/07/2015', end_date='04/01/2016', page_index=1, org_query_str=org_set, fixed_start_date=True)
 		r, status, totalResults, search_params = prep_request(payload)
 		if totalResults == 0:
 			continue
@@ -189,15 +177,26 @@ def mini():
 			continue
 		else:
 			pages_needed = int(totalResults/100) + 1
-			for page_ind in xrange(1, pages_needed + 1):
-				payload = prep_payload(start_date='08/07/2015', end_date='03/01/2016', page_index=page_ind, org_query_str=org_set, fixed_start_date=True)
+			for page_ind in xrange(2, pages_needed + 1):
+				payload = prep_payload(start_date='09/07/2015', end_date='04/01/2016', page_index=page_ind, org_query_str=org_set, fixed_start_date=True)
 				r, status, totalResults, search_params = prep_request(payload)
 				if totalResults == 0:
 					continue
 				responses = r.json()['releases']['release']
-				mongo_insert_responses(responses)
+				mongo_insert_responses(responses, search_params, coll)
 	pass
 
+def testOne():
+	csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
+	df = make_orgs_df(csv_file)
+	org_query_str = make_one_org_query_str(df,42600,42650)
+	payld = prep_payload(start_date='09/07/2015', end_date='04/01/2016', page_index=1, org_query_str=org_query_str, fixed_start_date=True)
+	print payld
+	r, status, totalResults, search_params = prep_request(payld)
+	responses = r.json()['releases']['release']
+	print responses[0]
+	print status
+	print totalResults
 
 def main():
 	orgs_csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
@@ -225,6 +224,7 @@ def main():
 
 if __name__ == '__main__':
 	# main()
-	mini()
+	mini(42600)
+	# testOne()
 
 
