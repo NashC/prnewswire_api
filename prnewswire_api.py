@@ -85,7 +85,7 @@ def prep_payload(start_date, end_date, page_index, org_query_str, fixed_start_da
 		'query': '(content:(' + org_query_str + ') + companies:(' + org_query_str + ') + ' + subject_query_str +' + '+ industry_query_str +' + '+ geo_query_str +' + language:en)',
 		'pageSize': 100,
 		'pageIndex': page_index,
-		'startDate': '09/07/2015'
+		'startDate': '10/07/2015'
 		# 'endDate': end_date
 		}
 	else:
@@ -159,7 +159,7 @@ def mini(start_index):
 	orgs_csv_file = '../crunchbase/cb_odm_csv/organizations.csv'
 	df_orgs = make_orgs_df(orgs_csv_file)
 	print 'DataFrame successfully created'
-	coll = start_mongo('press', 'big_2_part2')
+	coll = start_mongo('press', 'big_2_269850')
 	print 'Mongo DB started'
 	org_name_sets = make_all_org_query_strings(df=df_orgs, total=df_orgs.shape[0], request_size=50, start=start_index, finish=(start_index+49))
 	print 'Org Name Sets successfully created'
@@ -167,7 +167,7 @@ def mini(start_index):
 	for index, org_set in enumerate(org_name_sets):
 		print 'Org Set #', start_index
 		start_index += 50
-		payload = prep_payload(start_date='09/07/2015', end_date='04/01/2016', page_index=1, org_query_str=org_set, fixed_start_date=True)
+		payload = prep_payload(start_date='10/07/2015', end_date='05/01/2016', page_index=1, org_query_str=org_set, fixed_start_date=True)
 		r, status, totalResults, search_params = prep_request(payload)
 		if totalResults == 0:
 			continue
@@ -178,7 +178,7 @@ def mini(start_index):
 		else:
 			pages_needed = int(totalResults/100) + 1
 			for page_ind in xrange(2, pages_needed + 1):
-				payload = prep_payload(start_date='09/07/2015', end_date='04/01/2016', page_index=page_ind, org_query_str=org_set, fixed_start_date=True)
+				payload = prep_payload(start_date='10/07/2015', end_date='05/01/2016', page_index=page_ind, org_query_str=org_set, fixed_start_date=True)
 				r, status, totalResults, search_params = prep_request(payload)
 				if totalResults == 0:
 					continue
@@ -224,7 +224,15 @@ def main():
 
 if __name__ == '__main__':
 	# main()
-	mini(42600)
+	mini(269850)
 	# testOne()
 
+'''Notes
+Two big databases: big_2, big_2_42600, big_2_98600
 
+Last Org Set Counts:
+	Org Set # 269750
+	Org Set # 269800
+	Org Set # 269850
+
+'''
