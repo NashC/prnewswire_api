@@ -4,22 +4,20 @@ import pandas as pd
 import numpy as np
 from sklearn.decomposition import NMF
 from sklearn.feature_extraction.text import TfidfVectorizer, CountVectorizer
-import nltk
+from sklearn.grid_search import GridSearchCV
 from nltk import tokenize
 from nltk.corpus import stopwords
 from pymongo import MongoClient
 from time import time
 import re
+from textblob import TextBlob
+from sklearn.preprocessing import normalize
+from sklearn.metrics import mean_squared_error
+from sklearn.cross_validation import cross_val_score
 
-'''
-- topic clustering
-- NMF
-- how topics vary or group by industry/subject/geography (get dummies style)
--sentiment analysis: spacy.io (https://spacy.io/), nltk.sentiment (http://www.nltk.org/) (http://www.nltk.org/api/nltk.sentiment.html#module-nltk.sentiment.sentiment_analyzer)
-'''
 
 def mongo_to_df(db, collection):
-	connection = MongoClient()
+	connection = MongoClient('127.0.0.1', 27017)
 	db = connection[db]
 	input_data = db[collection]
 	df = pd.DataFrame(list(input_data.find()))
@@ -31,52 +29,145 @@ def make_dummies(df, col, prefix):
 	result = pd.concat([df, dummies], axis=1)
 	return result
 
-def prep_df(df):
-	df.drop_duplicates(subset=['article_id'], inplace=True)
+def get_cities(text):
+	city_date = text.split('PRNewswire')[0].split()
+	temp = []
+	for i, word in enumerate(city_date[:-1]):
+		if word.isupper():
+			if city_date[i+1].isupper():
+				temp.append(' '.join((city_date[i], city_date[i+1])))
+			elif city_date[i-1].isupper():
+				continue
+			else:
+				temp.append(word)
+	return temp
 
-	df['release_text'] = df['release_text'].apply(lambda x: x.lstrip('\n'))
-	df['release_text'] = df['release_text'].apply(lambda x: x.rstrip('\n'))
-	df['release_text'] = df['release_text'].apply(lambda x: x.replace('\n', ' '))
-	df['release_text'] = df['release_text'].apply(lambda x: x.replace(u'\xa0', u' '))
-	df['release_text'] = df['release_text'].apply(lambda x: re.sub('^\(?https?:\/\/.*[\r\n]*', '', x, flags=re.MULTILINE))
-	df['release_text'] = df['release_text'].apply(lambda x: re.sub('^\(?www\..*[\r\n]*', '', x, flags=re.MULTILINE))
+def lemmatize(doc_text):
+	# doc_text = doc_text.encode('utf-8')
+	blob = TextBlob(doc_text)
+	temp = []
+	for word in blob.words:
+		temp.append(word.lemmatize())
+	result = ' '.join(temp)
+	return result
+
+def prep_text(df):
+	df.drop_duplicates(subset=['article_id'], inplace=True)
+	df['city'] = df['release_text'].apply(lambda x: get_cities(x))
+	df['release_text'] = df['release_text'].apply(lambda x: re.sub(r'\(?(https?:\/\/)?(www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b([-a-zA-Z0-9@:%_\+.~#?&//=]*)\)?', '', x, flags=re.M))
+	df['release_text'] = df['release_text'].apply(lambda x: lemmatize(x))
 	return df
 
-# df_orig = mongo_to_df('press', 'big_2')
-# df_orig = mongo_to_df('press', 'big_2_42600')
-# df_orig = mongo_to_df('press', 'big_2_98600')
-df_orig = mongo_to_df('press', 'test_master_1')
-df = prep_df(df_orig)
-df = make_dummies(df, 'industry', 'ind')
-df = make_dummies(df, 'subject', 'subj')
-
-release_texts = df['release_text']
-
-n_samples = 2000
-n_features = 1000
-n_topics = 10
-n_top_words = 20
-
 def print_top_words(model, feature_names, n_top_words):
-    for topic_idx, topic in enumerate(model.components_):
-        print("Topic #%d:" % topic_idx)
-        print(" ".join([feature_names[i]
-                        for i in topic.argsort()[:-n_top_words - 1:-1]]))
-    pass
+	for topic_idx, topic in enumerate(model.components_):
+		print("Topic #%d:" % topic_idx)
+		print(" ".join([feature_names[i]
+						for i in topic.argsort()[:-n_top_words - 1:-1]]))
+	pass
 
-tfidf_vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, max_features=n_features, stop_words='english')
-tfidf = tfidf_vectorizer.fit_transform(release_texts)
+new_stop_words = ['ha', "\'s", 'tt', 'ireach', "n\'t", 'wo']
+def make_stop_words(new_words_list):
+	tfidf_temp = TfidfVectorizer(stop_words='english')
+	stop_words = tfidf_temp.get_stop_words()
+	result = list(stop_words) + new_words_list
+	return result
 
-tf_vectorizer = CountVectorizer(max_df=0.95, min_df=2, max_features=n_features, stop_words='english')
-tf = tf_vectorizer.fit_transform(release_texts)
+def row_normalize_tfidf(sparse_matrix):
+	return normalize(sparse_matrix, axis=1, norm='l1')
 
-# nmf = NMF(n_components=n_topics, random_state=1, alpha=.1, l1_ratio=.5)
-nmf = NMF(n_components=n_topics, random_state=1)
-nmf.fit(tfidf)
+def get_topics(n_components=10, n_top_words=15, print_output=True):
+	custom_stop_words = make_stop_words(new_stop_words)
+	tfidf_vectorizer = TfidfVectorizer(max_df=0.95, min_df=2, stop_words=custom_stop_words)
+	tfidf = tfidf_vectorizer.fit_transform(release_texts)
+	tfidf = row_normalize_tfidf(tfidf)
 
-print("\nTopics in NMF model:")
-tfidf_feature_names = tfidf_vectorizer.get_feature_names()
-print_top_words(nmf, tfidf_feature_names, n_top_words)
+	nmf = NMF(n_components=n_components, random_state=1)
+	# nmf = NMF(n_components=n_topics, random_state=1, alpha=.1, l1_ratio=.5)
+	nmf.fit(tfidf)
+	W = nmf.transform(tfidf)
+	
+
+	if print_output:
+		print("\nTopics in NMF model:")
+		tfidf_feature_names = tfidf_vectorizer.get_feature_names()
+		print_top_words(nmf, tfidf_feature_names, n_top_words)
+	
+	return tfidf, nmf, W
+
+
+y_mse = [4.1586519190079731e-07,
+ 4.0806056611869579e-07,
+ 4.0635976762741562e-07,
+ 4.0469315509174745e-07,
+ 4.031626753591851e-07,
+ 4.0198547133833227e-07,
+ 4.0069371691965978e-07,
+ 3.9989096055799519e-07,
+ 3.9873993330429839e-07,
+ 3.9755992608438446e-07,
+ 3.9668909965925691e-07,
+ 3.9565356967902645e-07,
+ 3.9478109096903595e-07,
+ 3.9395900472461631e-07,
+ 3.9306251341616297e-07,
+ 3.922508964184518e-07,
+ 3.9139907529199026e-07,
+ 3.9058720813092185e-07,
+ 3.8985442673013608e-07,
+ 3.8906441983276564e-07,
+ 3.8829184088224553e-07,
+ 3.8795241871128741e-07,
+ 3.8670916159757251e-07,
+ 3.8630316709902775e-07,
+ 3.8551159536125117e-07,
+ 3.8529296023215857e-07,
+ 3.8405309135809741e-07,
+ 3.8349524545279573e-07,
+ 3.8312979033889216e-07,
+ 3.8214679236464401e-07,
+ 3.8163433071433644e-07,
+ 3.812476213782855e-07,
+ 3.8037440645891213e-07,
+ 3.8003752994030476e-07,
+ 3.7912925338958192e-07,
+ 3.7869750967188198e-07,
+ 3.7801548354496874e-07,
+ 3.7721730759096696e-07,
+ 3.7667911984978913e-07,
+ 3.76411057692006e-07,
+ 3.7596695262405878e-07,
+ 3.7503280027874852e-07,
+ 3.74409880730487e-07,
+ 3.7385335317775083e-07,
+ 3.7370292291722861e-07,
+ 3.7324109586296963e-07,
+ 3.7239348121954796e-07,
+ 3.7220875451942766e-07,
+ 3.7157594400522471e-07,
+ 3.7092184827551988e-07]
+x_range = np.arange(1,51)
+
+def grid_search_nmf_ncomponents(tfidf, low, high):
+	tfidf_dense = tfidf.toarray()
+	mse_min = 99
+	mse_min_ncomponents = -1
+	for i in xrange(low, high + 1):
+		print 'Fitting n_components = %d ...' %i
+		nmf_temp = NMF(n_components=i, random_state=1)
+		# cv = cross_val_score(nmf_temp, tfidf, scoring='mean_squared_error', cv=5)
+		nmf_temp.fit(tfidf)
+		W = nmf_temp.transform(tfidf)
+		H = nmf_temp.components_
+		tfidf_pred = np.dot(W, H)
+		mse_temp = mean_squared_error(tfidf_dense, tfidf_pred)
+		y_mse.append(mse_temp)
+		x_range.append(i)
+		print 'MSE of n_components = %d: %.10f' %(i, mse_temp)
+		print '-------------------------------'
+		if mse_temp < mse_min:
+			mse_min = mse_temp
+			mse_min_ncomponents = i
+	return mse_min_ncomponents
 
 def sum_dummie_counts(df):
 	for col in df.columns:
@@ -84,6 +175,24 @@ def sum_dummie_counts(df):
 			print col, sum(df[col])
 		except:
 			pass
+
+def textblob_sentiment(text):
+	blob = TextBlob(text)
+	polarity = blob.sentiment.polarity
+	subjectivity = blob.sentiment.subjectivity
+	return (polarity, subjectivity)
+
+def add_sentiment_to_df(df):
+	df['polarity'] = df['release_text'].apply(lambda x: textblob_sentiment(x)[0])
+	df['subjectivity'] = df['release_text'].apply(lambda x: textblob_sentiment(x)[1])
+	return df
+
+nmf_grid = {'n_components': np.arange(3,25)}
+def grid_search(est, grid, train_data):
+    grid_cv = GridSearchCV(est, grid, n_jobs=-1, verbose=True,
+                           scoring='mean_squared_error').fit(train_data)
+    return grid_cv
+
 
 def make_subject_dict():
 	subject_list = [
@@ -162,10 +271,8 @@ def make_subject_dict():
 	[u'AVO', u'Advocacy Group Opinion'],
 	[u'OBI', u'Obituaries'],
 	[u'FEA', u'Features']]
-
 	subject_dict = {x[0]:x[1] for x in subject_list}
 	return subject_dict
-subject_dict = make_subject_dict()
 
 def make_industry_dict():
 	ind_list = [
@@ -293,3 +400,21 @@ def make_industry_dict():
 	]
 	ind_dict = {x[0]:x[1] for x in ind_list}
 	return ind_dict
+
+df_orig = mongo_to_df('press', 'test_master_1')
+subject_dict = make_subject_dict()
+industry_dict = make_industry_dict()
+
+df = prep_text(df_orig)
+df = make_dummies(df, 'industry', 'ind')
+df = make_dummies(df, 'subject', 'subj')
+df = add_sentiment_to_df(df)
+release_texts = df['release_text']
+
+tfidf, nmf, W = get_topics(print_output=True)
+
+# nmf_grid_search = grid_search(NMF(), nmf_grid, tfidf)
+
+
+
+

@@ -2,18 +2,51 @@ PR Newswire Project Notes
 
 Next Steps:
 - +++DONE+++:Merge all smaller MongoDB collections into one master collection with all press releases
-- Strip from release text - check out https://regex101.com/
-    + website URL's
-    + 'u/' unicode characters
+- Strip from release text - check out https://regex101.com/ for testing
+    + +++DONE+++: website URL's
+    + +++DONE+++:'u/' unicode characters
     + Heading at start of every release: 'u'LONG BEACH, Calif., Oct. 7, 2015 /PRNewswire/ --'
     	* Strip (City, State) and add to new columns in DF and DB
         * Remove: Date, /PRNewswire/, --
 - +++DONE+++: Industries/Subjects - Add dummies to DF
-    + Run topic clustering using these labels
-- sentiment analysis: spacy.io (https://spacy.io/), nltk.sentiment (http://www.nltk.org/) (http://www.nltk.org/api/nltk.sentiment.html#module-nltk.sentiment.sentiment_analyzer)
-- Call w PR Newswire people to get more API calls per day and larger date range access
-- Make dictionaries out of Subjects and Industries
-- Lemmatize words prior to tfidf or other model inputs
+	+ Learn and understand what the 'sum' function does at the end of my get dummies code for working the list of items.
+- +++DONE+++:Run topic clustering using these labels
+- +++DONE+++:sentiment analysis: spacy.io (https://spacy.io/), nltk.sentiment (http://www.nltk.org/) (http://www.nltk.org/api/nltk.sentiment.html#module-nltk.sentiment.sentiment_analyzer), TextBlob
+- +++DONE+++:Call w PR Newswire people to get more API calls per day and larger date range access
+- +++DONE+++:Make dictionaries out of Subjects and Industries
+- +++DONE+++: Lemmatize words prior to tfidf or other model inputs
+- +++DONE+++: download press releases for organizations not classified as 'company'
+- +++DONE+++: do value_counts() on 'source' of the releases to see top companies with releases
+- +++DONE+++: Check out Word2Vec: https://code.google.com/p/word2vec/
+- +++DONE+++: tfidf sparse matrix: normalize across rows so they sum to one
+- Manual grid search finding MSE of tfidf input versus
+- Build web app
+
+- If time permites
+	+ Word Clouds: about top words per topic
+	+ Try to get more press release data
+
+-Project Deliverables
+Model
+Powerpoint Presentation Slides
+	description
+	visualizations
+Web App with live update visualizations
+GitHub repo with extensive ReadMe explaining entire project
+	Project description
+	data acquisition pipeline
+	Model construction
+	Explanation of web app use
+Code with extensive comments explaining each step
+
+
+Potential Sources for more press releases
+- Business Wire
+- Marketwired
+- Factiva
+- LexisNexus
+- Newsbank
+
 
 
 PR Newswire API Subject and Industry Codes
