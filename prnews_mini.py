@@ -9,7 +9,9 @@ from nltk import tokenize
 from nltk.corpus import stopwords
 from pymongo import MongoClient
 from time import time
+import math
 import re
+from scipy import sparse
 from textblob import TextBlob
 from sklearn.preprocessing import normalize
 from sklearn.metrics import mean_squared_error
@@ -65,7 +67,7 @@ def print_top_words(model, feature_names, n_top_words):
 						for i in topic.argsort()[:-n_top_words - 1:-1]]))
 	pass
 
-new_stop_words = ['ha', "\'s", 'tt', 'ireach', "n\'t", 'wo']
+new_stop_words = ['ha', "\'s", 'tt', 'ireach', "n\'t", 'wo', 'pv', 'tm', 'anite']
 def make_stop_words(new_words_list):
 	tfidf_temp = TfidfVectorizer(stop_words='english')
 	stop_words = tfidf_temp.get_stop_words()
@@ -146,27 +148,108 @@ y_mse = [4.1586519190079731e-07,
  3.7157594400522471e-07,
  3.7092184827551988e-07]
 x_range = np.arange(1,51)
+y_mse_tts_round1 = [
+(1, 8.9955943708407939e-08),
+ (2, 9.3778027752158838e-08),
+ (3, 9.3544419976425533e-08),
+ (4, 9.5515890208877072e-08), 
+ (5, 9.6656460099495444e-08),
+ (6, 9.5885980397053374e-08),
+ (7, 9.5334438048771455e-08),
+ (8, 9.7381168085049762e-08),
+ (9, 9.7914818624726174e-08),
+ (10, 9.8099492350250766e-08),
+ (11, 9.785952599794063e-08),
+ (12, 9.8796338877999243e-08),
+ (13, 9.8042812898758145e-08),
+ (14, 1.0014030681676387e-07),
+ (15, 1.0061291988251698e-07),
+ (16, 1.0121614033949377e-07),
+ (17, 1.0100411437616885e-07)]
 
-def grid_search_nmf_ncomponents(tfidf, low, high):
+y_mse_tts_round2 = [(1, 8.9668696816688193e-08),
+ (2, 9.354006756512067e-08),
+ (3, 9.3912747795884238e-08),
+ (4, 9.4640311785966076e-08),
+ (5, 9.573811538314732e-08),
+ (6, 9.6150569668228365e-08),
+ (7, 9.6823212282909846e-08),
+ (8, 9.7862620557820369e-08),
+ (9, 9.7807808154723832e-08),
+ (10, 9.9052272941647242e-08),
+ (11, 9.7887749103781175e-08),
+ (12, 9.9018721619947148e-08),
+ (13, 1.0006480530688792e-07),
+ (14, 1.0013447027686969e-07),
+ (15, 1.0061047370872081e-07),
+ (16, 1.0133475093254728e-07),
+ (17, 1.0221336559036943e-07)]
+
+def tfidf_traintestsplit(tfidf_sparse, test_size=0.2):
+	# A = tfidf_sparse.toarray()
+	A = tfidf_sparse
+	total_entries = A.shape[0] * A.shape[1]
+	# print 'total_entries =', total_entries
+	train_size = 1. - test_size
+	# print 'train_size =', train_size
+	ones = np.ones(math.ceil(total_entries * train_size))
+	zeros = np.zeros(math.floor(total_entries * test_size))
+	# print 'ones length =', len(ones)
+	# print 'zeros length =', len(zeros)
+	r_temp = np.append(ones, zeros)
+	np.random.shuffle(r_temp)
+	# print 'total entries = ', total_entries
+	# print 'r_temp shape = ', r_temp.shape
+	# print 'tfidf shape = ', A.shape
+	R = np.reshape(r_temp, (A.shape))
+	R_flip = np.logical_not(R)
+
+	R = sparse.csr_matrix(R)
+	R_flip = sparse.csr_matrix(R_flip)
+	# print 'R.shape =', R.shape
+	# print 'R_flip.shape = ', R_flip.shape
+
+	A_train = sparse.spmatrix.multiply(A,R)
+	A_test = sparse.spmatrix.multiply(A,R_flip)
+	return A_train, A_test
+
+def grid_search_nmf_ncomponents(tfidf, folds, low, high):
 	tfidf_dense = tfidf.toarray()
 	mse_min = 99
 	mse_min_ncomponents = -1
 	for i in xrange(low, high + 1):
 		print 'Fitting n_components = %d ...' %i
-		nmf_temp = NMF(n_components=i, random_state=1)
-		# cv = cross_val_score(nmf_temp, tfidf, scoring='mean_squared_error', cv=5)
-		nmf_temp.fit(tfidf)
-		W = nmf_temp.transform(tfidf)
-		H = nmf_temp.components_
-		tfidf_pred = np.dot(W, H)
-		mse_temp = mean_squared_error(tfidf_dense, tfidf_pred)
-		y_mse.append(mse_temp)
-		x_range.append(i)
-		print 'MSE of n_components = %d: %.10f' %(i, mse_temp)
-		print '-------------------------------'
+		mse_arr = []
+		for j in xrange(1, folds + 1):
+			print 'Testing fold # %d' %j
+			test_size = 1./folds
+			A_train, A_test = tfidf_traintestsplit(tfidf, test_size=test_size)
+			nmf_temp = NMF(n_components=i, random_state=1)
+			nmf_temp.fit(A_train)
+			W = nmf_temp.transform(A_train)
+			H = nmf_temp.components_
+			tfidf_pred = np.dot(W, H)
+			mse_fold = mean_squared_error(A_test.toarray(), tfidf_pred)
+			mse_arr.append(mse_fold)
+		mse_temp = np.mean(mse_arr)
+		y_mse_tts.append((i, mse_temp))
 		if mse_temp < mse_min:
 			mse_min = mse_temp
 			mse_min_ncomponents = i
+
+		# cv = cross_val_score(nmf_temp, tfidf, scoring='mean_squared_error', cv=5)
+		# nmf_temp.fit(tfidf)
+		# W = nmf_temp.transform(tfidf)
+		# H = nmf_temp.components_
+		# tfidf_pred = np.dot(W, H)
+		# mse_temp = mean_squared_error(tfidf_dense, tfidf_pred)
+		# y_mse.append(mse_temp)
+		# x_range.append(i)
+		print 'MSE of n_components = %d: %.10f' %(i, mse_temp)
+		print '-------------------------------'
+		# if mse_temp < mse_min:
+		# 	mse_min = mse_temp
+		# 	mse_min_ncomponents = i
 	return mse_min_ncomponents
 
 def sum_dummie_counts(df):
@@ -187,11 +270,11 @@ def add_sentiment_to_df(df):
 	df['subjectivity'] = df['release_text'].apply(lambda x: textblob_sentiment(x)[1])
 	return df
 
-nmf_grid = {'n_components': np.arange(3,25)}
-def grid_search(est, grid, train_data):
-    grid_cv = GridSearchCV(est, grid, n_jobs=-1, verbose=True,
-                           scoring='mean_squared_error').fit(train_data)
-    return grid_cv
+# nmf_grid = {'n_components': np.arange(3,25)}
+# def grid_search(est, grid, train_data):
+#     grid_cv = GridSearchCV(est, grid, n_jobs=-1, verbose=True,
+#                            scoring='mean_squared_error').fit(train_data)
+#     return grid_cv
 
 
 def make_subject_dict():

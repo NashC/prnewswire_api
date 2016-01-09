@@ -20,11 +20,21 @@ Next Steps:
 - +++DONE+++: Check out Word2Vec: https://code.google.com/p/word2vec/
 - +++DONE+++: tfidf sparse matrix: normalize across rows so they sum to one
 - Manual grid search finding MSE of tfidf input versus
+- Calculate topic strength by meta item (industry, subject, location, other)
 - Build web app
+	+ stack?
+		* Flask
+		* Bootstrap
+		* Heroku
+		* Plotly
+	+ D3? - if i have time
+	+ NLP stats to display (polarity, subjectivity, explanation of each stat, word count, standalone stats vs compared to press release corpus, parts of speech, sentence count, sentence sentiment, vocab complexity/reading level)
+- Install 'geograpy' library to get city, state names
 
 - If time permites
 	+ Word Clouds: about top words per topic
 	+ Try to get more press release data
+	+ D3 visualizations
 
 -Project Deliverables
 Model
